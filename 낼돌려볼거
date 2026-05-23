@@ -1,0 +1,1064 @@
+from base_ctrl import BaseController
+from jetcam.csi_camera import CSICamera
+
+import torch
+import torchvision
+from torchvision import transforms
+
+import cv2
+import time
+import threading
+
+from ultralytics import YOLO
+
+# =====================================
+# 차량 연결
+# =====================================
+base = BaseController('/dev/ttyUSB0', 115200)
+
+# =====================================
+# 카메라 연결
+# =====================================
+camera = CSICamera(
+    capture_width=1280,
+    capture_height=720,
+    downsample=2,
+    capture_fps=30
+)
+
+# =====================================
+# DEVICE
+# =====================================
+device = torch.device(
+    'cuda' if torch.cuda.is_available() else 'cpu'
+)
+
+# =====================================
+# 모델 생성
+# =====================================
+def get_model():
+    model = torchvision.models.alexnet(
+        num_classes=2
+    )
+    return model
+
+# =====================================
+# 모델 로드
+# =====================================
+def load_model(weight_path):
+    model = get_model()
+    model.load_state_dict(
+        torch.load(
+            weight_path,
+            map_location=device
+        )
+    )
+    model = model.to(device)
+    model.eval()
+    print(f"[INFO] Loaded: {weight_path}")
+    return model
+
+# =====================================
+# 모델들
+# =====================================
+left_model = load_model(
+    'left_4.pth'
+)
+right_model = load_model(
+    'right_3.pth'
+)
+rotation_only_model = load_model(
+    'road_rotation_only_model.pth'
+)
+
+# =====================================
+# YOLO
+# =====================================
+yolo_model = YOLO('best_real.pt')
+
+# =====================================
+# 이미지 전처리
+# =====================================
+transform = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Resize((224, 224)),
+    transforms.ToTensor()
+])
+
+def preprocess(frame):
+    image = transform(frame)
+    return image.unsqueeze(0).to(device)
+
+# =====================================
+# MAX
+# =====================================
+MAX_STEER = 2.0
+MAX_SPEED = 0.5
+
+# =====================================
+# STAGE PARAMS
+# =====================================
+STAGE_PARAMS = {
+    # =================================
+    # 시작 좌회전
+    # =================================
+    "START_LEFT": {
+
+        "model": left_model,
+
+        "speed": 0.18,
+
+        "turn_strength": 0.98,
+
+        "use_fixed_steering": False,
+
+        "fixed_steering": 0.0,
+
+        "duration": 15.0,
+
+        "bias": +0.34,
+
+        "Kp": 2.5,
+
+        "use_deadzone": True,
+
+        "deadzone_min": -0.02,
+
+        "deadzone_max": 1.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 첫번째 회전교차로 우회전 진입
+    # =================================
+    "ROUNDABOUT_RIGHT_ENTER": {
+
+        "model": None,
+
+        "speed": 0.18,
+
+        "turn_strength": 0.32,
+
+        "use_fixed_steering": True,
+
+        "fixed_steering": +0.30,
+
+        "duration": 10,
+
+        "bias": 0.0,
+
+        "Kp": 0.0,
+
+        "use_deadzone": False,
+
+        "deadzone_min": 0.0,
+
+        "deadzone_max": 0.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 첫번째 회전교차로 좌회전 진입
+    # =================================
+    "ROUNDABOUT_LEFT_ENTER": {
+
+        "model": None,
+
+        "speed": 0.2,
+
+        "turn_strength": 0.32,
+
+        "use_fixed_steering": True,
+
+        "fixed_steering": +0.30,
+
+        "duration": 4.0,
+
+        "bias": 0.0,
+
+        "Kp": 0.0,
+
+        "use_deadzone": False,
+
+        "deadzone_min": 0.0,
+
+        "deadzone_max": 0.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # rotation only
+    # =================================
+    "ROTATION_ONLY": {
+
+        "model": rotation_only_model,
+
+        "speed": 0.15,
+
+        "turn_strength": 0.3,
+
+        "use_fixed_steering": False,
+
+        "fixed_steering": 0.0,
+
+        "duration": 11.0,
+
+        "bias": 0.15,
+
+        "Kp": 2.0,
+
+        "use_deadzone": False,
+
+        "deadzone_min": 0.0,
+
+        "deadzone_max": 0.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 일반 우회전
+    # =================================
+    "NORMAL_RIGHT": {
+
+        "model": right_model,
+
+        "speed": 0.18,
+
+        "turn_strength": 0.98,
+
+        "use_fixed_steering": False,
+
+        "fixed_steering": 0.0,
+
+        "duration": 9999,
+
+        "bias": -0.31,
+
+        "Kp": 2.7,
+
+        "use_deadzone": True,
+
+        "deadzone_min": -1.0,
+
+        "deadzone_max": 0.08,
+
+        "L_offset": 0.02,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 일반 좌회전
+    # =================================
+    "NORMAL_LEFT": {
+
+        "model": left_model,
+
+        "speed": 0.18,
+
+        "turn_strength": 0.98,
+
+        "use_fixed_steering": False,
+
+        "fixed_steering": 0.0,
+
+        "duration": 9999,
+
+        "bias": +0.34,
+
+        "Kp": 2.5,
+
+        "use_deadzone": True,
+
+        "deadzone_min": -0.02,
+
+        "deadzone_max": 1.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 두번째 회전교차로 LEFT 루트
+    # =================================
+    "SECOND_ROUNDABOUT_LEFT": {
+
+        "model": None,
+
+        "speed": 0.2,
+
+        "turn_strength": 0.32,
+
+        "use_fixed_steering": True,
+
+        "fixed_steering": 0.30,
+
+        "duration": 8.0,
+
+        "bias": 0.0,
+
+        "Kp": 0.0,
+
+        "use_deadzone": False,
+
+        "deadzone_min": 0.0,
+
+        "deadzone_max": 0.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 두번째 회전교차로 RIGHT 진입
+    # =================================
+    "SECOND_ROUNDABOUT_RIGHT_ENTER": {
+
+        "model": None,
+
+        "speed": 0.18,
+
+        "turn_strength": 0.32,
+
+        "use_fixed_steering": True,
+
+        "fixed_steering": +0.30,
+
+        "duration": 4.0,
+
+        "bias": 0.0,
+
+        "Kp": 0.0,
+
+        "use_deadzone": False,
+
+        "deadzone_min": 0.0,
+
+        "deadzone_max": 0.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 두번째 rotation only
+    # =================================
+    "SECOND_ROTATION_ONLY": {
+
+        "model": rotation_only_model,
+
+        "speed": 0.15,
+
+        "turn_strength": 0.30,
+
+        "use_fixed_steering": False,
+
+        "fixed_steering": 0.0,
+
+        "duration": 11.0,
+
+        "bias": 0.15,
+
+        "Kp": 2.0,
+
+        "use_deadzone": False,
+
+        "deadzone_min": 0.0,
+
+        "deadzone_max": 0.0,
+
+        "L_offset": 0.00,
+
+        "R_offset": 0.00
+    }
+}
+
+# =====================================
+# 시작 설정
+# =====================================
+
+current_stage = 0
+drive_mode = "START_LEFT"
+stage_start_time = time.time()
+roundabout_direction = None
+
+# =====================================
+# 시작 표지판 카운트
+# =====================================
+left_sign_count = 0
+right_sign_count = 0
+
+# =====================================
+# 이벤트 상태
+# =====================================
+event_mode = None
+event_start_time = 0.0
+
+# =====================================
+# 이벤트 쿨타임
+# =====================================
+event_cooldown = 15.0
+last_event_time = -999
+
+# =================================
+# 이벤트 실행 횟수
+# =================================
+sinho_count = 0
+stop_count = 0
+slow_count = 0
+
+print(
+    f"[START] "
+    f"Stage: {current_stage} "
+    f"| Mode: {drive_mode} "
+    f"| Direction: {roundabout_direction}"
+)
+
+# =====================================
+# 비동기 제어
+# =====================================
+def send_control_async(L, R):
+    def worker():
+        base.base_json_ctrl({
+            'T': 1,
+            'L': L,
+            'R': R
+        })
+    threading.Thread(
+        target=worker,
+        daemon=True
+    ).start()
+
+# =====================================
+# clip
+# =====================================
+def clip(val, max_val):
+    return max(
+        min(val, max_val),
+        -max_val
+    )
+
+# =====================================
+# 차량 제어
+# =====================================
+def update_vehicle_motion(
+    steering,
+    speed,
+    turn_strength,
+    L_offset,
+    R_offset
+):
+    steering = clip(
+        steering,
+        MAX_STEER
+    )
+
+    L = speed - steering * turn_strength
+    R = speed + steering * turn_strength
+
+    L += L_offset
+    R += R_offset
+
+    L = clip(L, MAX_SPEED)
+    R = clip(R, MAX_SPEED)
+
+    send_control_async(R, L)
+
+    print(
+        f"[AUTO] "
+        f"Mode: {drive_mode:<35} "
+        f"Steer: {steering:+.2f} "
+        f"L: {L:+.2f} "
+        f"R: {R:+.2f}"
+    )
+
+# =================================
+# SIGN DETECTION CONFIG
+# =================================
+SIGN_CONFIG = {
+
+    "LEFT": {
+
+        "conf": 0.8,
+
+        "min_width": 40
+    },
+
+    "RIGHT": {
+
+        "conf": 0.60,
+
+        "min_width": 30
+    },
+
+    "SINHO": {
+
+        "conf": 0.60,
+
+        "min_width": 100
+    },
+
+    "SLOW": {
+
+        "conf": 0.65,
+
+        "min_width": 100
+    },
+
+    "STOP": {
+
+        "conf": 0.65,
+
+        "min_width": 110
+    }
+}
+
+# =====================================
+# YOLO 표지판 인식
+# =====================================
+def detect_sign(frame):
+
+    results = yolo_model.predict(
+    source=frame,
+    verbose=False)
+
+    detected = None
+
+    side_detected = False
+
+    for r in results:
+
+        boxes = r.boxes
+
+        for box in boxes:
+
+            cls_id = int(box.cls[0])
+
+            label = yolo_model.names[cls_id]
+
+            conf = float(box.conf[0])
+
+            # =================================
+            # 박스 크기
+            # =================================
+            x1, y1, x2, y2 = box.xyxy[0]
+
+            box_width = x2 - x1
+            box_height = y2 - y1
+
+            # =================================
+            # 첫번째 회전교차로
+            # =================================
+            if label == "Left" and box_width >= SIGN_CONFIG["LEFT"]["min_width"] and conf >= SIGN_CONFIG["LEFT"]["conf"]:
+
+                detected = "LEFT"
+
+            elif label == "Right" and box_width >= SIGN_CONFIG["RIGHT"]["min_width"] and conf >= SIGN_CONFIG["RIGHT"]["conf"]:
+
+                detected = "RIGHT"
+
+            # =================================
+            # SINHO
+            # =================================
+            elif (label == "Sinho" and box_height >= SIGN_CONFIG["SINHO"]["min_width"] and conf >= SIGN_CONFIG["SINHO"]["conf"]):
+
+                detected = "SINHO"
+
+            # =================================
+            # SLOW
+            # =================================
+            elif (label == "Slow" and box_width >= SIGN_CONFIG["SLOW"]["min_width"] and conf >= SIGN_CONFIG["SLOW"]["conf"]):
+
+                detected = "SLOW"
+
+            # =================================
+            # STOP
+            # =================================
+            elif (label == "Stop" and box_width >= SIGN_CONFIG["STOP"]["min_width"] and conf >= SIGN_CONFIG["STOP"]["conf"]):
+
+                detected = "STOP"
+
+            # =================================
+            # 두번째 회전교차로
+            # =================================
+            elif label == "Exit":
+
+                side_detected = True
+
+    return detected, side_detected
+
+# =====================================
+# STAGE UPDATE
+# =====================================
+def update_stage(
+    now,
+    detected_sign,
+    side_sign
+):
+
+    global current_stage
+    global stage_start_time
+    global drive_mode
+    global roundabout_direction
+
+    elapsed = now - stage_start_time
+
+    # =================================
+    # STAGE 0
+    # 회전교차로 진입 전
+    # =================================
+    if current_stage == 0:
+
+        global left_sign_count
+        global right_sign_count
+
+        elapsed = time.time() - stage_start_time
+
+        # =============================
+        # 표지판 카운트
+        # =============================
+        if detected_sign == "LEFT":
+
+            left_sign_count += 1
+
+            print(
+                f"[LEFT COUNT] "
+                f"{left_sign_count}"
+            )
+
+        elif detected_sign == "RIGHT":
+
+            right_sign_count += 1
+
+            print(
+                f"[RIGHT COUNT] "
+                f"{right_sign_count}"
+            )
+
+        # =============================
+        # 탐지 시간 종료
+        # =============================
+        if elapsed > STAGE_PARAMS[
+            "START_LEFT"
+        ]["duration"]:
+
+            print(
+                f"[FINAL COUNT] "
+                f"L={left_sign_count} "
+                f"R={right_sign_count}"
+            )
+
+            # =========================
+            # RIGHT 우세
+            # =========================
+            if right_sign_count > left_sign_count:
+
+                roundabout_direction = "RIGHT"
+
+                current_stage = 21
+
+                drive_mode = (
+                    "ROUNDABOUT_RIGHT_ENTER"
+                )
+
+                print(
+                    "[STAGE] 0 -> 21 "
+                    "(RIGHT ROUNDABOUT)"
+                )
+
+            # =========================
+            # LEFT 우세
+            # =========================
+            else:
+
+                roundabout_direction = "LEFT"
+
+                current_stage = 22
+
+                drive_mode = (
+                    "ROUNDABOUT_LEFT_ENTER"
+                )
+
+                print(
+                    "[STAGE] 0 -> 22 "
+                    "(LEFT ROUNDABOUT)"
+                )
+
+            # =========================
+            # 회전교차로 진입 전 정지
+            # =========================
+            base.base_json_ctrl({
+
+                'T': 1,
+
+                'L': 0.0,
+
+                'R': 0.0
+            })
+
+            time.sleep(2.0)
+
+            stage_start_time = time.time()
+
+    elif current_stage == 21:
+
+        elapsed = time.time() - stage_start_time
+
+        if elapsed > STAGE_PARAMS[
+            "ROUNDABOUT_RIGHT_ENTER"
+        ]["duration"]:
+
+            current_stage = 3
+
+            stage_start_time = time.time()
+
+            drive_mode = "NORMAL_LEFT"
+
+    elif current_stage == 22:
+
+        elapsed = time.time() - stage_start_time
+
+        if drive_mode == "ROUNDABOUT_LEFT_ENTER":
+
+            if elapsed > STAGE_PARAMS[
+                "ROUNDABOUT_LEFT_ENTER"
+            ]["duration"]:
+
+                stage_start_time = time.time()
+
+                drive_mode = "ROTATION_ONLY"
+
+        elif drive_mode == "ROTATION_ONLY":
+
+            if elapsed > STAGE_PARAMS[
+                "ROTATION_ONLY"
+            ]["duration"]:
+
+                current_stage = 3
+
+                stage_start_time = time.time()
+
+                drive_mode = "NORMAL_RIGHT"
+
+                base.base_json_ctrl({
+
+                    'T': 1,
+
+                    'L': 0.0,
+
+                    'R': 0.0
+                })
+
+                
+
+    elif current_stage == 3:
+
+        if side_sign:
+
+            if roundabout_direction == "LEFT":
+
+                current_stage = 41
+
+                stage_start_time = time.time()
+
+                drive_mode = "SECOND_ROUNDABOUT_LEFT"
+
+            elif roundabout_direction == "RIGHT":
+
+                current_stage = 42
+
+                stage_start_time = time.time()
+
+                drive_mode = (
+                    "SECOND_ROUNDABOUT_RIGHT_ENTER"
+                )
+
+    elif current_stage == 41:
+        elapsed = time.time() - stage_start_time
+
+        if elapsed > STAGE_PARAMS[
+            "SECOND_ROUNDABOUT_LEFT"
+        ]["duration"]:
+
+            print("[MISSION END]")
+
+    elif current_stage == 42:
+        elapsed = time.time() - stage_start_time
+
+        if (
+
+            drive_mode
+            == "SECOND_ROUNDABOUT_RIGHT_ENTER"
+        ):
+
+            if elapsed > STAGE_PARAMS[
+                "SECOND_ROUNDABOUT_RIGHT_ENTER"
+            ]["duration"]:
+
+                stage_start_time = time.time()
+
+                drive_mode = (
+                    "SECOND_ROTATION_ONLY"
+                )
+
+        elif drive_mode == "SECOND_ROTATION_ONLY":
+
+            if elapsed > STAGE_PARAMS[
+                "SECOND_ROTATION_ONLY"
+            ]["duration"]:
+
+                print("[MISSION END]")
+
+# =====================================
+# MAIN LOOP
+# =====================================
+try:
+
+    while True:
+
+        frame = camera.read()
+
+        height, width = frame.shape[:2]
+
+        center_x = width / 2
+
+        now = time.time()
+
+        detected_sign, side_sign = detect_sign(
+            frame
+        )
+
+        update_stage(
+            now,
+            detected_sign,
+            side_sign
+        )
+
+        # =================================
+        # 일반 주행 중 이벤트 감지
+        # =================================
+        if (
+
+            drive_mode == "NORMAL_LEFT"
+
+            or
+
+            drive_mode == "NORMAL_RIGHT"
+        ):
+
+            # =================================
+            # 이벤트 쿨타임
+            # =================================
+            if (
+
+                event_mode is None
+
+                and
+
+                now - last_event_time
+                > event_cooldown
+            ):
+
+                # =============================
+                # SINHO
+                # =============================
+                if detected_sign == "SINHO" and  sinho_count < 2:
+
+                    event_mode = "SINHO"
+
+                    event_start_time = now
+
+                    last_event_time = now
+
+                    sinho_count += 1
+
+                    print("[EVENT] SINHO")
+
+                # =============================
+                # STOP
+                # =============================
+                elif detected_sign == "STOP" and stop_count < 2:
+
+                    event_mode = "STOP"
+
+                    event_start_time = now
+
+                    last_event_time = now
+
+                    stop_count += 1
+
+                    print("[EVENT] STOP")
+
+                # =============================
+                # SLOW
+                # =============================
+                elif detected_sign == "SLOW" and slow_count < 2:
+
+                    event_mode = "SLOW"
+
+                    event_start_time = now
+
+                    last_event_time = now
+
+                    slow_count += 1
+
+                    print("[EVENT] SLOW")
+
+        params = STAGE_PARAMS[drive_mode]
+
+        current_speed = params["speed"]
+
+        # =================================
+        # FIXED STEERING
+        # =================================
+        if params["use_fixed_steering"]:
+
+            steering = params[
+                "fixed_steering"
+            ]
+
+        else:
+
+            input_tensor = preprocess(frame)
+
+            with torch.no_grad():
+
+                output = params["model"](
+                    input_tensor
+                )
+
+            x, y = output[
+                0
+            ].detach().cpu().numpy()
+
+            pred_x = (
+                (x / 2 + 0.5)
+                * width
+            )
+
+            error = pred_x - center_x
+
+            error_norm = error / center_x
+
+            steering = (
+
+                params["Kp"]
+                * error_norm
+
+                + params["bias"]
+            )
+
+            # =================================
+            # 마지막 코너 boost
+            # NORMAL_RIGHT 전용
+            # =================================
+            if drive_mode == "NORMAL_RIGHT":
+
+                elapsed_stage_time = (
+                    now - stage_start_time
+                )
+
+                if (
+
+                    elapsed_stage_time > 30.0
+
+                    and
+
+                    0.09 <= steering <= 0.15
+                ):
+
+                    steering += 0.035
+
+            # =================================
+            # deadzone
+            # =================================
+            if params["use_deadzone"]:
+
+                if (
+
+                    params["deadzone_min"]
+
+                    <= steering
+
+                    <= params["deadzone_max"]
+                ):
+
+                    steering = 0.0
+
+        steering = clip(
+            steering,
+            MAX_STEER
+        )
+
+        # =================================
+        # EVENT OVERRIDE
+        # =================================
+        if event_mode == "SINHO":
+
+            if now - event_start_time < 2.0:
+
+                steering = 0.0
+                current_speed = 0.0
+
+            else:
+
+                event_mode = None
+
+        elif event_mode == "STOP":
+
+            if now - event_start_time < 3.0:
+
+                steering = 0.0
+                current_speed = 0.0
+
+            else:
+
+                event_mode = None
+
+        elif event_mode == "SLOW":
+
+            if now - event_start_time < 5.0:
+
+                current_speed *= 0.5
+
+            else:
+
+                event_mode = None
+
+        # =================================
+        # 차량 제어
+        # =================================
+        update_vehicle_motion(
+            steering,
+            current_speed,
+            params["turn_strength"],
+            params["L_offset"],
+            params["R_offset"]
+        )
+        time.sleep(0.03)
+
+except KeyboardInterrupt:
+    print("\nSTOP")
+
+finally:
+    base.base_json_ctrl({
+        'T': 1,
+        'L': 0.0,
+        'R': 0.0
+    })
+    cv2.destroyAllWindows()

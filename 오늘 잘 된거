@@ -460,6 +460,12 @@ event_mode = None
 event_start_time = 0.0
 
 # =====================================
+# 이벤트 누적 시간
+# =====================================
+paused_time_total = 0.0
+pause_start_time = 0.0
+
+# =====================================
 # 이벤트 쿨타임
 # =====================================
 event_cooldown = 15.0
@@ -694,13 +700,14 @@ def detect_circle(frame):
 def update_stage(
     now,
     detected_sign,
-    circle_tected
+    circle_detected
 ):
 
     global current_stage
     global stage_start_time
     global drive_mode
     global roundabout_direction
+    global paused_time_total
 
     elapsed = now - stage_start_time
 
@@ -813,6 +820,8 @@ def update_stage(
 
             stage_start_time = time.time()
 
+            paused_time_total = 0.0
+
             drive_mode = "NORMAL_LEFT"
 
     elif current_stage == 22:
@@ -839,6 +848,8 @@ def update_stage(
 
                 stage_start_time = time.time()
 
+                paused_time_total = 0.0
+
                 drive_mode = "NORMAL_RIGHT"
 
                 base.base_json_ctrl({
@@ -859,7 +870,7 @@ def update_stage(
 
         if circle_detected:
 
-             # =========================
+            # =========================
             # 차량 정지
             # =========================
             base.base_json_ctrl({
@@ -884,6 +895,7 @@ def update_stage(
             if roundabout_direction == "LEFT":
                 current_stage = 41
                 stage_start_time = time.time()
+                paused_time_total = 0.0
                 drive_mode = "SECOND_ROUNDABOUT_LEFT"
 
 
@@ -902,6 +914,7 @@ def update_stage(
             elif roundabout_direction == "RIGHT":
                 current_stage = 42
                 stage_start_time = time.time()
+                paused_time_total = 0.0
                 drive_mode = "SECOND_ROUNDABOUT_RIGHT_ENTER"
 
     elif current_stage == 41:
@@ -927,6 +940,7 @@ def update_stage(
             ]["duration"]:
 
                 stage_start_time = time.time()
+                paused_time_total = 0.0
 
                 drive_mode = (
                     "SECOND_ROTATION_ONLY"
@@ -937,7 +951,7 @@ def update_stage(
             if elapsed > STAGE_PARAMS[
                 "SECOND_ROTATION_ONLY"
             ]["duration"]:
-
+                paused_time_total = 0.0
                 drive_mode = (
                     "SECOND_NORMAL_RIGHT"
                 )
@@ -1016,6 +1030,8 @@ try:
 
                     event_start_time = now
 
+                    pause_start_time = now
+
                     last_event_time = now
 
                     sinho_count += 1
@@ -1031,6 +1047,8 @@ try:
 
                     event_start_time = now
 
+                    pause_start_time = now
+
                     last_event_time = now
 
                     stop_count += 1
@@ -1045,6 +1063,8 @@ try:
                     event_mode = "SLOW"
 
                     event_start_time = now
+
+                    pause_start_time = now
 
                     last_event_time = now
 
@@ -1103,12 +1123,12 @@ try:
             if drive_mode == "NORMAL_LEFT":
 
                 elapsed_stage_time = (
-                    now - stage_start_time
+                    now - stage_start_time - paused_time_total
                 )
 
                 if (
 
-                    42.0 < elapsed_stage_time < 50.0
+                    38.0 < elapsed_stage_time < 46.0
 
                     and
 
@@ -1116,14 +1136,14 @@ try:
                 ):
                     
                     steering += 0.1
-                    # =================================
+            # =================================
             # 마지막 코너 boost
             # NORMAL_RIGHT 전용
             # =================================
             if drive_mode == "NORMAL_RIGHT":
 
                 elapsed_stage_time = (
-                    now - stage_start_time
+                    now - stage_start_time - paused_time_total
                 )
 
                 if (
@@ -1169,7 +1189,9 @@ try:
                 current_speed = 0.0
 
             else:
-
+                paused_time_total += (
+                    now - pause_start_time
+                )
                 event_mode = None
 
         elif event_mode == "STOP":
@@ -1180,7 +1202,9 @@ try:
                 current_speed = 0.0
 
             else:
-
+                paused_time_total += (
+                    now - pause_start_time
+                )
                 event_mode = None
 
         elif event_mode == "SLOW":
@@ -1190,7 +1214,9 @@ try:
                 current_speed *= 0.7
 
             else:
-
+                paused_time_total += (
+                    now - pause_start_time
+                )
                 event_mode = None
 
         # =================================

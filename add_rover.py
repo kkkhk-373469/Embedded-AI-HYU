@@ -106,7 +106,7 @@ SIGN_CONFIG = {
         "min_width": 30
     },
     "SINHO": {
-        "conf": 0.60,
+        "conf": 0.55,
         "min_height": 100
     },
     "SLOW": {
@@ -208,20 +208,21 @@ STAGE_PARAMS = {
 
     # =================================
     # 첫번째 회전교차로 RIGHT 표지판 루트
+    # Rover 통과 확인 후 right_3.pth로 10초 경로 추종
     # =================================
     "ROUNDABOUT_RIGHT_ENTER": {
-        "model": None,
+        "model": right_model,
         "speed": 0.18,
-        "turn_strength": 0.32,
-        "use_fixed_steering": True,
-        "fixed_steering": +0.30,
+        "turn_strength": 0.98,
+        "use_fixed_steering": False,
+        "fixed_steering": 0.0,
         "duration": 10.0,
-        "bias": 0.0,
-        "Kp": 0.0,
-        "use_deadzone": False,
-        "deadzone_min": 0.0,
-        "deadzone_max": 0.0,
-        "L_offset": 0.00,
+        "bias": -0.31,
+        "Kp": 2.7,
+        "use_deadzone": True,
+        "deadzone_min": -1.0,
+        "deadzone_max": 0.08,
+        "L_offset": 0.02,
         "R_offset": 0.00
     },
 
@@ -831,11 +832,11 @@ def update_stage(now, detected_sign, circle_detected, rover_clear):
 
             print(
                 "[STAGE] ROVER CLEAR "
-                "-> ROUNDABOUT_RIGHT_ENTER"
+                "-> ROUNDABOUT_RIGHT_ENTER: right_3.pth (10.0s)"
             )
 
     # =================================
-    # STAGE 21: 첫번째 RIGHT 루트 진입 종료 후 일반 주행
+    # STAGE 21: right_3.pth 주행 종료 후 left_4.pth 일반 주행
     # =================================
     elif current_stage == 21:
 

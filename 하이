@@ -369,9 +369,15 @@ STAGE_PARAMS = {
 
         "duration": 9999,
 
-        "bias": 0,
+        "bias": 0.0,
 
-        "Kp": 2.0,
+        # Segmentation lane center 오차용 PID gain
+        # 초기 테스트용으로 P를 낮게, I/D를 작게 설정
+        "Kp": 0.75,
+
+        "Ki": 0.02,
+
+        "Kd": 0.03,
 
         "use_deadzone": True,
 
@@ -403,7 +409,13 @@ STAGE_PARAMS = {
 
         "bias": 0.0,
 
-        "Kp": 2.0,
+        # Segmentation lane center 오차용 PID gain
+        # 초기 테스트용으로 P를 낮게, I/D를 작게 설정
+        "Kp": 0.75,
+
+        "Ki": 0.02,
+
+        "Kd": 0.03,
 
         "use_deadzone": True,
 
@@ -592,11 +604,33 @@ left_detect_count = 0
 right_detect_count = 0
 
 # =====================================
-# Steering smoothing
+# Segmentation PID steering 제어
 # =====================================
+# 이전 steering과 새 steering을 섞어 조향 떨림을 줄임.
+# 값이 클수록 이전 steering을 더 많이 유지하므로 부드러워짐.
 prev_steering = 0.0
+STEERING_SMOOTHING = 0.80
 
-STEERING_SMOOTHING = 0.7
+# Segmentation 모드에서만 사용하는 최대 조향값.
+# 기존 MAX_STEER=1.0은 다른 주행 모드의 동작을 유지하기 위해 그대로 둔다.
+SEG_MAX_STEER = 1.0
+
+# 한 루프에서 steering이 바뀔 수 있는 최대량.
+# 확 꺾이는 현상을 직접 제한한다.
+MAX_STEERING_STEP = 0.04
+
+# Integral wind-up 방지 한계
+PID_INTEGRAL_LIMIT = 0.35
+
+# derivative 값의 노이즈 완화 계수. 클수록 D항이 덜 튄다.
+PID_DERIVATIVE_FILTER = 0.80
+
+# PID 내부 상태
+pid_integral = 0.0
+pid_prev_error = 0.0
+pid_prev_time = None
+pid_filtered_derivative = 0.0
+pid_active_mode = None
 
 # =====================================
 # Rover bbox 추적 / Rover 대기 시간 상태
@@ -639,6 +673,113 @@ def clip(val, max_val):
         min(val, max_val),
         -max_val
     )
+
+# =====================================
+# Segmentation PID 제어 함수
+# =====================================
+def reset_segmentation_pid():
+    """Segmentation 제어 모드가 끝나거나 다시 시작할 때 PID 누적값 초기화."""
+
+    global prev_steering
+    global pid_integral
+    global pid_prev_error
+    global pid_prev_time
+    global pid_filtered_derivative
+    global pid_active_mode
+
+    prev_steering = 0.0
+    pid_integral = 0.0
+    pid_prev_error = 0.0
+    pid_prev_time = None
+    pid_filtered_derivative = 0.0
+    pid_active_mode = None
+
+
+def calculate_segmentation_pid(error_norm, params, now, current_mode):
+    """
+    Segmentation mask 중심 오차(error_norm)를 이용한 PID steering 계산.
+
+    P: 현재 차선 중심 오차에 반응
+    I: 작은 편향이 계속 남아 있을 때 보정
+    D: 오차가 급격히 바뀌는 경우 조향 변화를 완화
+
+    추가로 smoothing과 steering step limit를 적용하여
+    한 프레임에서 바퀴 명령이 크게 튀지 않도록 한다.
+    """
+
+    global prev_steering
+    global pid_integral
+    global pid_prev_error
+    global pid_prev_time
+    global pid_filtered_derivative
+    global pid_active_mode
+
+    # NORMAL_LEFT <-> NORMAL_RIGHT 전환 또는 PID 최초 진입 시 초기화
+    if pid_active_mode != current_mode or pid_prev_time is None:
+        pid_active_mode = current_mode
+        pid_integral = 0.0
+        pid_prev_error = error_norm
+        pid_prev_time = now
+        pid_filtered_derivative = 0.0
+
+        p_term = params["Kp"] * error_norm
+        i_term = 0.0
+        d_term = 0.0
+
+    else:
+        # YOLO 추론 속도에 따라 dt가 튀어도 PID가 과민 반응하지 않도록 범위 제한
+        dt = now - pid_prev_time
+        dt = max(min(dt, 0.20), 0.02)
+
+        pid_integral += error_norm * dt
+        pid_integral = clip(
+            pid_integral,
+            PID_INTEGRAL_LIMIT
+        )
+
+        derivative = (
+            (error_norm - pid_prev_error)
+            / dt
+        )
+
+        pid_filtered_derivative = (
+            PID_DERIVATIVE_FILTER * pid_filtered_derivative
+            + (1 - PID_DERIVATIVE_FILTER) * derivative
+        )
+
+        p_term = params["Kp"] * error_norm
+        i_term = params["Ki"] * pid_integral
+        d_term = params["Kd"] * pid_filtered_derivative
+
+        pid_prev_error = error_norm
+        pid_prev_time = now
+
+    raw_steering = (
+        p_term
+        + i_term
+        + d_term
+        + params["bias"]
+    )
+
+    # 기존 smoothing보다 더 부드럽게 적용
+    smoothed_steering = (
+        STEERING_SMOOTHING * prev_steering
+        + (1 - STEERING_SMOOTHING) * raw_steering
+    )
+
+    # 한 프레임에서 조향값이 갑자기 커지는 것 제한
+    steering_delta = smoothed_steering - prev_steering
+    steering_delta = clip(
+        steering_delta,
+        MAX_STEERING_STEP
+    )
+
+    steering = prev_steering + steering_delta
+    steering = clip(steering, SEG_MAX_STEER)
+
+    prev_steering = steering
+
+    return steering, p_term, i_term, d_term
 
 # =====================================
 # 차량 제어
@@ -1372,7 +1513,9 @@ try:
                     verbose=False
                 )
 
-                steering = 0.0
+                # mask가 없을 경우에도 즉시 steering=0으로 튀지 않도록
+                # 이전 조향값을 한 step만큼만 중립 방향으로 복귀시킨다.
+                steering = prev_steering
 
                 if len(results) > 0:
 
@@ -1416,34 +1559,63 @@ try:
                                 error / (mask_w / 2)
                             )
 
-                            steering = (
-
-                                params["Kp"]
-                                * error_norm
-
-                                + params["bias"]
+                            # =================================
+                            # Segmentation PID steering
+                            # =================================
+                            steering, p_term, i_term, d_term = (
+                                calculate_segmentation_pid(
+                                    error_norm,
+                                    params,
+                                    now,
+                                    drive_mode
+                                )
                             )
 
-                            # =================================
-                            # steering smoothing
-                            # =================================
-                            steering = (
-
-                                STEERING_SMOOTHING
-                                * prev_steering
-
-                                +
-
-                                (1 - STEERING_SMOOTHING)
-                                * steering
+                            print(
+                                f"[SEG PID] "
+                                f"Mode={drive_mode} "
+                                f"lane_center={lane_center:.1f} "
+                                f"error_norm={error_norm:+.3f} "
+                                f"P={p_term:+.3f} "
+                                f"I={i_term:+.3f} "
+                                f"D={d_term:+.3f} "
+                                f"steer={steering:+.3f}"
                             )
 
+                        else:
+                            # ROI 안에서 mask 픽셀이 없으면 급격히 직진으로 바꾸지 않고
+                            # 현재 steering을 천천히 0으로 돌린다.
+                            steering_delta = clip(
+                                -prev_steering,
+                                MAX_STEERING_STEP
+                            )
+                            steering = prev_steering + steering_delta
                             prev_steering = steering
+
+                    else:
+                        steering_delta = clip(
+                            -prev_steering,
+                            MAX_STEERING_STEP
+                        )
+                        steering = prev_steering + steering_delta
+                        prev_steering = steering
+
+                else:
+                    steering_delta = clip(
+                        -prev_steering,
+                        MAX_STEERING_STEP
+                    )
+                    steering = prev_steering + steering_delta
+                    prev_steering = steering
 
             # =================================
             # 기존 regression 모드
             # =================================
             else:
+
+                # regression / 회전 구간에서는 segmentation PID 누적값을 사용하지 않음
+                if pid_active_mode is not None:
+                    reset_segmentation_pid()
 
                 input_tensor = preprocess(frame)
 
@@ -1505,6 +1677,9 @@ try:
                 steering = 0.0
                 current_speed = 0.0
 
+                if drive_mode in SEGMENTATION_MODES:
+                    reset_segmentation_pid()
+
             else:
                 paused_time_total += (
                     now - pause_start_time
@@ -1517,6 +1692,9 @@ try:
 
                 steering = 0.0
                 current_speed = 0.0
+
+                if drive_mode in SEGMENTATION_MODES:
+                    reset_segmentation_pid()
 
             else:
                 paused_time_total += (

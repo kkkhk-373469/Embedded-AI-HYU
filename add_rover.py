@@ -972,18 +972,7 @@ def update_stage(
                 current_stage = 22
                 drive_mode = "ROUNDABOUT_LEFT_ENTER"
 
-                base.base_json_ctrl({
-                    'T': 1,
-                    'L': 0.0,
-                    'R': 0.0
-                })
-
-                print(
-                    "[STAGE] LEFT SELECTED "
-                    "-> STOP 2.0s -> ROUNDABOUT_LEFT_ENTER"
-                )
-
-                time.sleep(2.0)
+                
                 stage_start_time = time.time()
 
     # =================================
@@ -1099,13 +1088,7 @@ def update_stage(
             # 처음 RIGHT: 기존 두 번째 RIGHT 진입 방식 유지
             elif roundabout_direction == "RIGHT":
 
-                base.base_json_ctrl({
-                    'T': 1,
-                    'L': 0.0,
-                    'R': 0.0
-                })
-
-                time.sleep(2.0)
+               
 
                 current_stage = 42
                 stage_start_time = time.time()

@@ -1,5 +1,3 @@
-# 파라미터 수정 필요(start duration, right, left)
-
 from base_ctrl import BaseController
 from jetcam.csi_camera import CSICamera
 
@@ -69,15 +67,23 @@ left_model = load_model(
 right_model = load_model(
     'right_3.pth'
 )
+
+right2_model = load_model(
+    'road_right.pth'
+)
 rotation_only_model = load_model(
-    'road_rotation_only_model.pth'
+    'rotation_only_2.pth'
+)
+
+left2_model = load_model(
+    'road_following_model_3.pth'
 )
 
 # =====================================
 # YOLO
 # =====================================
 yolo_model = YOLO('best_real.pt')
-
+circle_model = YOLO('best_circle.pt')
 # =====================================
 # 이미지 전처리
 # =====================================
@@ -94,8 +100,15 @@ def preprocess(frame):
 # =====================================
 # MAX
 # =====================================
-MAX_STEER = 2.0
+MAX_STEER = 1.0
 MAX_SPEED = 0.5
+
+# =====================================
+# Circle 전용 탐지 조건
+# =====================================
+# best_circle.pt에서 class 이름이 circle 또는 Circle이어야 함
+CIRCLE_CONF = 0.70
+CIRCLE_MIN_WIDTH = 280
 
 # =====================================
 # STAGE PARAMS
@@ -110,27 +123,27 @@ STAGE_PARAMS = {
 
         "speed": 0.18,
 
-        "turn_strength": 0.98,
+        "turn_strength": 0.75,
 
         "use_fixed_steering": False,
 
         "fixed_steering": 0.0,
 
-        "duration": 15.0,
+        "duration": 9.4,
 
-        "bias": +0.34,
+        "bias": 0.40,
 
-        "Kp": 2.5,
+        "Kp": 2.6,
 
         "use_deadzone": True,
 
-        "deadzone_min": -0.02,
+        "deadzone_min": 0,
 
         "deadzone_max": 1.0,
 
-        "L_offset": 0.00,
+        "L_offset": 0.0,
 
-        "R_offset": 0.00
+        "R_offset": 0.08
     },
 
     # =================================
@@ -138,31 +151,31 @@ STAGE_PARAMS = {
     # =================================
     "ROUNDABOUT_RIGHT_ENTER": {
 
-        "model": None,
+        "model": right2_model,
 
         "speed": 0.18,
 
-        "turn_strength": 0.32,
+        "turn_strength": 0.5,
 
-        "use_fixed_steering": True,
+        "use_fixed_steering": False,
 
-        "fixed_steering": +0.30,
+        "fixed_steering": 0.0,
 
-        "duration": 10,
+        "duration": 9.5,
 
-        "bias": 0.0,
+        "bias": 0,
 
-        "Kp": 0.0,
+        "Kp": 2.5,
 
-        "use_deadzone": False,
+        "use_deadzone": True,
 
         "deadzone_min": 0.0,
 
-        "deadzone_max": 0.0,
+        "deadzone_max": 0.08,
 
         "L_offset": 0.00,
 
-        "R_offset": 0.00
+        "R_offset": 0.0
     },
 
     # =================================
@@ -170,31 +183,31 @@ STAGE_PARAMS = {
     # =================================
     "ROUNDABOUT_LEFT_ENTER": {
 
-        "model": None,
+        "model": right2_model,
 
-        "speed": 0.2,
+        "speed": 0.18,
 
-        "turn_strength": 0.32,
+        "turn_strength": 0.5,
 
-        "use_fixed_steering": True,
+        "use_fixed_steering": False,
 
-        "fixed_steering": +0.30,
+        "fixed_steering": 0.0,
 
         "duration": 4.0,
 
-        "bias": 0.0,
+        "bias": 0,
 
-        "Kp": 0.0,
+        "Kp": 2.5,
 
-        "use_deadzone": False,
+        "use_deadzone": True,
 
         "deadzone_min": 0.0,
 
-        "deadzone_max": 0.0,
+        "deadzone_max": 0.08,
 
         "L_offset": 0.00,
 
-        "R_offset": 0.00
+        "R_offset": 0.0
     },
 
     # =================================
@@ -212,9 +225,9 @@ STAGE_PARAMS = {
 
         "fixed_steering": 0.0,
 
-        "duration": 11.0,
+        "duration": 8.8,
 
-        "bias": 0.15,
+        "bias": 0.8,
 
         "Kp": 2.0,
 
@@ -238,7 +251,7 @@ STAGE_PARAMS = {
 
         "speed": 0.18,
 
-        "turn_strength": 0.98,
+        "turn_strength": 0.99,
 
         "use_fixed_steering": False,
 
@@ -266,11 +279,11 @@ STAGE_PARAMS = {
     # =================================
     "NORMAL_LEFT": {
 
-        "model": left_model,
+        "model": left2_model,
 
         "speed": 0.18,
 
-        "turn_strength": 0.98,
+        "turn_strength": 0.43,
 
         "use_fixed_steering": False,
 
@@ -278,19 +291,19 @@ STAGE_PARAMS = {
 
         "duration": 9999,
 
-        "bias": +0.34,
+        "bias": 0.33,
 
-        "Kp": 2.5,
+        "Kp": 3,
 
         "use_deadzone": True,
 
-        "deadzone_min": -0.02,
+        "deadzone_min": -0.05,
 
-        "deadzone_max": 1.0,
+        "deadzone_max": 0.0,
 
         "L_offset": 0.00,
 
-        "R_offset": 0.00
+        "R_offset": 0.08
     },
 
     # =================================
@@ -298,31 +311,31 @@ STAGE_PARAMS = {
     # =================================
     "SECOND_ROUNDABOUT_LEFT": {
 
-        "model": None,
+        "model": right2_model,
 
-        "speed": 0.2,
+        "speed": 0.18,
 
-        "turn_strength": 0.32,
+        "turn_strength": 0.5,
 
-        "use_fixed_steering": True,
+        "use_fixed_steering": False,
 
-        "fixed_steering": 0.30,
+        "fixed_steering": 0.0,
 
-        "duration": 8.0,
+        "duration": 9.0,
 
-        "bias": 0.0,
+        "bias": 0,
 
-        "Kp": 0.0,
+        "Kp": 2.5,
 
-        "use_deadzone": False,
+        "use_deadzone": True,
 
         "deadzone_min": 0.0,
 
-        "deadzone_max": 0.0,
+        "deadzone_max": 0.08,
 
         "L_offset": 0.00,
 
-        "R_offset": 0.00
+        "R_offset": 0.0
     },
 
     # =================================
@@ -330,31 +343,31 @@ STAGE_PARAMS = {
     # =================================
     "SECOND_ROUNDABOUT_RIGHT_ENTER": {
 
-        "model": None,
+        "model": right2_model,
 
         "speed": 0.18,
 
-        "turn_strength": 0.32,
+        "turn_strength": 0.5,
 
-        "use_fixed_steering": True,
+        "use_fixed_steering": False,
 
-        "fixed_steering": +0.30,
+        "fixed_steering": 0.0,
 
-        "duration": 4.0,
+        "duration": 4.5,
 
-        "bias": 0.0,
+        "bias": 0,
 
-        "Kp": 0.0,
+        "Kp": 2.5,
 
-        "use_deadzone": False,
+        "use_deadzone": True,
 
         "deadzone_min": 0.0,
 
-        "deadzone_max": 0.0,
+        "deadzone_max": 0.08,
 
         "L_offset": 0.00,
 
-        "R_offset": 0.00
+        "R_offset": 0.0
     },
 
     # =================================
@@ -364,17 +377,17 @@ STAGE_PARAMS = {
 
         "model": rotation_only_model,
 
-        "speed": 0.15,
+        "speed": 0.18,
 
-        "turn_strength": 0.30,
+        "turn_strength": 0.29,
 
         "use_fixed_steering": False,
 
         "fixed_steering": 0.0,
 
-        "duration": 11.0,
+        "duration": 8,
 
-        "bias": 0.15,
+        "bias": 0.8,
 
         "Kp": 2.0,
 
@@ -384,11 +397,46 @@ STAGE_PARAMS = {
 
         "deadzone_max": 0.0,
 
-        "L_offset": 0.00,
+        "L_offset": 0.1,
+
+        "R_offset": 0.00
+    },
+
+    # =================================
+    # 두번째 회전교차로 이후 일반 우회전
+    # =================================
+    "SECOND_NORMAL_RIGHT": {
+
+        "model": right_model,
+
+        "speed": 0.18,
+
+        "turn_strength": 0.99,
+
+        "use_fixed_steering": False,
+
+        "fixed_steering": 0.0,
+
+        "duration": 9999,
+
+        "bias": -0.31,
+
+        "Kp": 2.7,
+
+        "use_deadzone": True,
+
+        "deadzone_min": -1.0,
+
+        "deadzone_max": 0.08,
+
+        "L_offset": 0.02,
 
         "R_offset": 0.00
     }
 }
+
+
+
 
 # =====================================
 # 시작 설정
@@ -423,6 +471,9 @@ last_event_time = -999
 sinho_count = 0
 stop_count = 0
 slow_count = 0
+
+left_detect_count = 0
+right_detect_count = 0
 
 print(
     f"[START] "
@@ -496,37 +547,38 @@ SIGN_CONFIG = {
 
     "LEFT": {
 
-        "conf": 0.8,
+        "conf": 0.6,
 
-        "min_width": 40
+        "min_width": 20
     },
 
     "RIGHT": {
 
-        "conf": 0.60,
+        "conf": 0.2
+        ,
 
-        "min_width": 30
+        "min_width": 15
     },
 
     "SINHO": {
 
-        "conf": 0.60,
+        "conf": 0.40,
 
-        "min_width": 100
+        "min_width": 50
     },
 
     "SLOW": {
 
-        "conf": 0.65,
+        "conf": 0.6,
 
         "min_width": 100
     },
 
     "STOP": {
 
-        "conf": 0.65,
+        "conf": 0.5,
 
-        "min_width": 110
+        "min_width": 100
     }
 }
 
@@ -540,8 +592,6 @@ def detect_sign(frame):
     verbose=False)
 
     detected = None
-
-    side_detected = False
 
     for r in results:
 
@@ -595,14 +645,48 @@ def detect_sign(frame):
 
                 detected = "STOP"
 
-            # =================================
-            # 두번째 회전교차로
-            # =================================
-            elif label == "Exit":
 
-                side_detected = True
+    return detected
 
-    return detected, side_detected
+# =====================================
+# Circle 전용 탐지
+# =====================================
+def detect_circle(frame):
+    """
+    best_circle.pt를 사용해 두 번째 회전교차로 진입 기준인 Circle만 탐지한다.
+    Circle confidence와 bbox width가 기준 이상일 때만 True를 반환한다.
+    """
+    results = circle_model.predict(
+        source=frame,
+        conf=CIRCLE_CONF,
+        verbose=False
+    )
+
+    for r in results:
+        boxes = r.boxes
+
+        if boxes is None:
+            continue
+
+        for box in boxes:
+            cls_id = int(box.cls[0].item())
+            label = str(circle_model.names[cls_id]).lower()
+            conf = float(box.conf[0].item())
+
+            if label != "circle":
+                continue
+
+            x1, y1, x2, y2 = box.xyxy[0].detach().cpu().numpy()
+            box_width = x2 - x1
+
+            if box_width >= CIRCLE_MIN_WIDTH:
+                print(
+                    f"[CIRCLE] DETECTED conf={conf:.2f} "
+                    f"width={box_width:.1f}"
+                )
+                return True
+
+    return False
 
 # =====================================
 # STAGE UPDATE
@@ -610,7 +694,7 @@ def detect_sign(frame):
 def update_stage(
     now,
     detected_sign,
-    side_sign
+    circle_tected
 ):
 
     global current_stage
@@ -768,27 +852,57 @@ def update_stage(
 
                 
 
+    # =================================
+    # STAGE 3: 일반 주행 중 두번째 회전교차로 기준 객체(Circle) 대기
+    # =================================
     elif current_stage == 3:
 
-        if side_sign:
+        if circle_detected:
 
+             # =========================
+            # 차량 정지
+            # =========================
+            base.base_json_ctrl({
+
+                'T': 1,
+
+                'L': 0.0,
+
+                'R': 0.0
+            })
+
+            # =========================
+            # 2초 대기
+            # =========================
+
+            time.sleep(2.0)
+
+            # =================================
+            # 처음 표지판에서 LEFT가 선택된 경우:
+            # Circle이 충분히 크게 탐지되면 우선 정지 후 Rover 통과 대기
+            # =================================
             if roundabout_direction == "LEFT":
-
                 current_stage = 41
-
                 stage_start_time = time.time()
-
                 drive_mode = "SECOND_ROUNDABOUT_LEFT"
 
-            elif roundabout_direction == "RIGHT":
 
-                current_stage = 42
+                base.base_json_ctrl({
+                    'T': 1,
+                    'L': 0.0,
+                    'R': 0.0
+                })
 
-                stage_start_time = time.time()
-
-                drive_mode = (
-                    "SECOND_ROUNDABOUT_RIGHT_ENTER"
+                print(
+                    "[STAGE] CIRCLE DETECTED AFTER FIRST LEFT ",
+                    "SECOND_ROUNDABOUT_LEFT"
                 )
+
+            # 기존 RIGHT 분기는 그대로 유지
+            elif roundabout_direction == "RIGHT":
+                current_stage = 42
+                stage_start_time = time.time()
+                drive_mode = "SECOND_ROUNDABOUT_RIGHT_ENTER"
 
     elif current_stage == 41:
         elapsed = time.time() - stage_start_time
@@ -824,7 +938,17 @@ def update_stage(
                 "SECOND_ROTATION_ONLY"
             ]["duration"]:
 
-                print("[MISSION END]")
+                drive_mode = (
+                    "SECOND_NORMAL_RIGHT"
+                )
+
+                stage_start_time = time.time()
+
+                print(
+                    "[STAGE] "
+                    "SECOND_ROTATION_ONLY "
+                    "-> SECOND_NORMAL_RIGHT"
+                )
 
 # =====================================
 # MAIN LOOP
@@ -841,14 +965,21 @@ try:
 
         now = time.time()
 
-        detected_sign, side_sign = detect_sign(
+        detected_sign = detect_sign(
             frame
         )
+
+        # Circle은 두 번째 회전교차로 접근 판단이 필요한 일반 주행 구간에서만 탐지
+        # 따라서 best_circle.pt가 불필요하게 매 프레임 실행되는 것을 줄인다.
+        circle_detected = False
+
+        if current_stage == 3:
+            circle_detected = detect_circle(frame)
 
         update_stage(
             now,
             detected_sign,
-            side_sign
+            circle_detected
         )
 
         # =================================
@@ -969,6 +1100,26 @@ try:
             # 마지막 코너 boost
             # NORMAL_RIGHT 전용
             # =================================
+            if drive_mode == "NORMAL_LEFT":
+
+                elapsed_stage_time = (
+                    now - stage_start_time
+                )
+
+                if (
+
+                    42.0 < elapsed_stage_time > 50.0
+
+                    and
+
+                    -0.25 <= steering <= -0.1
+                ):
+                    
+                    steering += 0.1
+                    # =================================
+            # 마지막 코너 boost
+            # NORMAL_RIGHT 전용
+            # =================================
             if drive_mode == "NORMAL_RIGHT":
 
                 elapsed_stage_time = (
@@ -977,14 +1128,14 @@ try:
 
                 if (
 
-                    elapsed_stage_time > 30.0
+                    elapsed_stage_time > 50.0
 
                     and
 
-                    0.09 <= steering <= 0.15
+                    0.09 <= steering <= 0.2
                 ):
 
-                    steering += 0.035
+                    steering += 0.1
 
             # =================================
             # deadzone
@@ -1012,7 +1163,7 @@ try:
         # =================================
         if event_mode == "SINHO":
 
-            if now - event_start_time < 2.0:
+            if now - event_start_time < 3.0:
 
                 steering = 0.0
                 current_speed = 0.0
@@ -1023,7 +1174,7 @@ try:
 
         elif event_mode == "STOP":
 
-            if now - event_start_time < 3.0:
+            if now - event_start_time < 4.0:
 
                 steering = 0.0
                 current_speed = 0.0
@@ -1034,9 +1185,9 @@ try:
 
         elif event_mode == "SLOW":
 
-            if now - event_start_time < 5.0:
+            if now - event_start_time < 4.5:
 
-                current_speed *= 0.5
+                current_speed *= 0.7
 
             else:
 

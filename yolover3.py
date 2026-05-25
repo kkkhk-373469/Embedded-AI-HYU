@@ -307,7 +307,7 @@ STAGE_PARAMS = {
 
         "speed": 0.18,
 
-        "turn_strength": 0.31,
+        "turn_strength": 0.2,
 
         "use_fixed_steering": False,
 
@@ -315,7 +315,7 @@ STAGE_PARAMS = {
 
         "duration": 7.2,
 
-        "bias": 0.8,
+        "bias": 0.0,
 
         "Kp": 2.0,
 
@@ -325,7 +325,7 @@ STAGE_PARAMS = {
 
         "deadzone_max": 0.0,
 
-        "L_offset": 0.04,
+        "L_offset": 0.00,
 
         "R_offset": 0.00
     },
@@ -475,7 +475,7 @@ STAGE_PARAMS = {
 
         "duration": 7.0,
 
-        "bias": 0.8,
+        "bias": 0.0,
 
         "Kp": 2.0,
 

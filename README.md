@@ -1,7 +1,7 @@
 This project focused on enabling an autonomous Wave Rover to perceive its surroundings and execute specific driving missions using YOLO-based object detection and PID control.
 <img width="1160" height="605" alt="스크린샷 2026-05-23 오후 5 06 20" src="https://github.com/user-attachments/assets/c38fb7a2-89ad-4da2-9795-15679561dbb2" />
-<img width="1158" height="601" alt="스크린샷 2026-05-23 오후 5 06 30" src="https://github.com/user-attachments/assets/c2604b63-9ab7-45d2-92b6-8e61f0dd9562" />
 <img width="1156" height="599" alt="스크린샷 2026-05-23 오후 5 06 25" src="https://github.com/user-attachments/assets/321ff9d1-2963-4d92-870b-e31cf63f3a1c" />
+<img width="1158" height="601" alt="스크린샷 2026-05-23 오후 5 06 30" src="https://github.com/user-attachments/assets/c2604b63-9ab7-45d2-92b6-8e61f0dd9562" />
 <img width="1158" height="590" alt="스크린샷 2026-05-23 오후 5 06 35" src="https://github.com/user-attachments/assets/9e31bd6f-ed23-46b0-9a37-335b804b10bf" />
 # Automotive Embedded AI Autonomous Driving Project
 

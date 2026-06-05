@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 # ============================================================
-# Left Camera + left_start.engine PID Road Following
+# Dual Camera PID Road Following
 # Stop when circle bbox width >= 280 px
 # ============================================================
 
@@ -16,12 +16,20 @@ import numpy as np
 base = BaseController('/dev/ttyUSB0', 115200)
 
 # =====================================
-# Camera
+# Cameras
 # CAM1 = left camera
 # CAM0 = right camera
 # =====================================
-camera = CSICamera(
+left_camera = CSICamera(
     capture_device=1,       # CAM1 = 왼쪽 카메라
+    capture_width=1280,
+    capture_height=720,
+    downsample=2,
+    capture_fps=30
+)
+
+right_camera = CSICamera(
+    capture_device=0,       # CAM0 = 오른쪽 카메라
     capture_width=1280,
     capture_height=720,
     downsample=2,
@@ -31,8 +39,13 @@ camera = CSICamera(
 # =====================================
 # Models
 # =====================================
-seg_model = YOLO(
+left_seg_model = YOLO(
     'left_start.engine',
+    task='segment'
+)
+
+right_seg_model = YOLO(
+    'right.engine',
     task='segment'
 )
 
@@ -80,6 +93,15 @@ STEERING_SMOOTHING = 0.35
 
 # ROI: mask 하단 몇 %를 사용할지
 ROI_START_RATIO = 0.70
+
+# 오른쪽 카메라 조향 부호 보정.
+# 테스트 중 오른쪽 카메라만 유효할 때 반대로 꺾이면 -1.0으로 바꾸면 됨.
+LEFT_ERROR_SIGN = 1.0
+RIGHT_ERROR_SIGN = 1.0
+
+# 양쪽 카메라가 모두 유효할 때 error_norm 가중 평균 비율
+LEFT_ERROR_WEIGHT = 0.50
+RIGHT_ERROR_WEIGHT = 0.50
 
 
 class PIDController:
@@ -184,7 +206,14 @@ def warmup_models():
     )
 
     print("[WARMUP] left_start.engine")
-    seg_model.predict(
+    left_seg_model.predict(
+        source=dummy_frame,
+        imgsz=640,
+        verbose=False
+    )
+
+    print("[WARMUP] right.engine")
+    right_seg_model.predict(
         source=dummy_frame,
         imgsz=640,
         verbose=False
@@ -200,7 +229,7 @@ def warmup_models():
     print("[WARMUP] Done")
 
 
-def detect_circle(frame):
+def detect_circle(frame, camera_name):
     """
     circle bbox width가 CIRCLE_MIN_WIDTH 이상이면 True.
     """
@@ -244,7 +273,7 @@ def detect_circle(frame):
 
     if max_width >= CIRCLE_MIN_WIDTH:
         print(
-            f"[CIRCLE] DETECTED "
+            f"[CIRCLE:{camera_name}] DETECTED "
             f"conf={max_conf:.2f} "
             f"width={max_width:.1f}px "
             f">= {CIRCLE_MIN_WIDTH}px"
@@ -254,20 +283,54 @@ def detect_circle(frame):
     return False, max_width, max_conf
 
 
-def get_steering_from_segmentation(frame, prev_steering):
+def detect_circle_dual(left_frame, right_frame):
     """
-    left_start.engine segmentation mask 기반으로 lane center 계산.
-    PID 제어를 이용해 steering 출력.
+    양쪽 카메라 중 하나라도 circle bbox width 조건을 만족하면 True.
     """
 
-    results = seg_model.predict(
+    left_detected = False
+    left_width = 0.0
+    left_conf = 0.0
+    right_detected = False
+    right_width = 0.0
+    right_conf = 0.0
+
+    if left_frame is not None:
+        left_detected, left_width, left_conf = detect_circle(
+            left_frame,
+            "left"
+        )
+
+    if right_frame is not None:
+        right_detected, right_width, right_conf = detect_circle(
+            right_frame,
+            "right"
+        )
+
+    if left_detected or right_detected:
+        if left_width >= right_width:
+            return True, left_width, left_conf, "left"
+        return True, right_width, right_conf, "right"
+
+    if left_width >= right_width:
+        return False, left_width, left_conf, "left"
+    return False, right_width, right_conf, "right"
+
+
+def get_error_from_segmentation(frame, model, camera_name, error_sign):
+    """
+    segmentation mask 기반으로 lane center와 image center 차이를 계산.
+    PID는 양쪽 카메라 error를 합친 뒤 한 번만 적용한다.
+    """
+
+    results = model.predict(
         source=frame,
         imgsz=640,
         verbose=False
     )
 
     if len(results) == 0:
-        return prev_steering, False, None
+        return None, False
 
     r = results[0]
 
@@ -276,7 +339,7 @@ def get_steering_from_segmentation(frame, prev_steering):
         or r.masks.data is None
         or r.masks.data.shape[0] == 0
     ):
-        return prev_steering, False, None
+        return None, False
 
     masks = (
         r.masks.data
@@ -313,13 +376,86 @@ def get_steering_from_segmentation(frame, prev_steering):
     )
 
     if len(xs) == 0:
-        return prev_steering, False, None
+        return None, False
 
     lane_center = np.mean(xs)
     image_center = mask_w / 2.0
 
     error = lane_center - image_center
-    error_norm = error / image_center
+    error_norm = (error / image_center) * error_sign
+
+    debug_info = {
+        "camera": camera_name,
+        "lane_center": lane_center,
+        "image_center": image_center,
+        "error_norm": error_norm
+    }
+
+    return debug_info, True
+
+
+def fuse_dual_errors(left_debug, left_valid, right_debug, right_valid):
+    """
+    양쪽 카메라 error_norm을 하나의 PID 입력값으로 합친다.
+    한쪽만 유효하면 해당 카메라만 사용한다.
+    """
+
+    if left_valid and right_valid:
+        total_weight = LEFT_ERROR_WEIGHT + RIGHT_ERROR_WEIGHT
+        if total_weight <= 1e-6:
+            total_weight = 1.0
+
+        error_norm = (
+            left_debug["error_norm"] * LEFT_ERROR_WEIGHT
+            + right_debug["error_norm"] * RIGHT_ERROR_WEIGHT
+        ) / total_weight
+
+        return error_norm, "dual"
+
+    if left_valid:
+        return left_debug["error_norm"], "left"
+
+    if right_valid:
+        return right_debug["error_norm"], "right"
+
+    return None, "none"
+
+
+def get_steering_from_dual_segmentation(
+    left_frame,
+    right_frame,
+    prev_steering
+):
+    left_debug = None
+    left_valid = False
+    right_debug = None
+    right_valid = False
+
+    if left_frame is not None:
+        left_debug, left_valid = get_error_from_segmentation(
+            left_frame,
+            left_seg_model,
+            "left",
+            LEFT_ERROR_SIGN
+        )
+
+    if right_frame is not None:
+        right_debug, right_valid = get_error_from_segmentation(
+            right_frame,
+            right_seg_model,
+            "right",
+            RIGHT_ERROR_SIGN
+        )
+
+    error_norm, source = fuse_dual_errors(
+        left_debug,
+        left_valid,
+        right_debug,
+        right_valid
+    )
+
+    if error_norm is None:
+        return prev_steering, False, None
 
     raw_steering, dt, derivative = pid.update(error_norm)
 
@@ -335,8 +471,9 @@ def get_steering_from_segmentation(frame, prev_steering):
     )
 
     debug_info = {
-        "lane_center": lane_center,
-        "image_center": image_center,
+        "source": source,
+        "left": left_debug,
+        "right": right_debug,
         "error_norm": error_norm,
         "raw_steering": raw_steering,
         "dt": dt,
@@ -378,9 +515,9 @@ def update_vehicle_motion(steering, speed):
 
 def main():
     print("==============================================")
-    print(" Left Camera PID Road Following")
-    print(" Camera: CAM1")
-    print(" Segmentation: left_start.engine")
+    print(" Dual Camera PID Road Following")
+    print(" Cameras: CAM1(left), CAM0(right)")
+    print(" Segmentation: left_start.engine + right.engine")
     print(f" Stop condition: circle width >= {CIRCLE_MIN_WIDTH}px")
     print(f" SWAP_LR_COMMAND = {SWAP_LR_COMMAND}")
     print("==============================================")
@@ -396,15 +533,32 @@ def main():
 
     try:
         while True:
-            frame = camera.read()
+            left_frame = left_camera.read()
+            right_frame = right_camera.read()
 
-            if frame is None:
+            if left_frame is None and right_frame is None:
+                print("[CAMERA] both frames missing, skip")
                 continue
+
+            if left_frame is None or right_frame is None:
+                print(
+                    f"[CAMERA] "
+                    f"left={'OK' if left_frame is not None else 'MISS'} "
+                    f"right={'OK' if right_frame is not None else 'MISS'}"
+                )
 
             # =====================================
             # 1. Circle detection
             # =====================================
-            circle_detected, circle_width, circle_conf = detect_circle(frame)
+            (
+                circle_detected,
+                circle_width,
+                circle_conf,
+                circle_source
+            ) = detect_circle_dual(
+                left_frame,
+                right_frame
+            )
 
             if circle_detected:
                 circle_count += 1
@@ -414,16 +568,20 @@ def main():
             if circle_count >= CIRCLE_CONFIRM_FRAMES:
                 print(
                     f"[STOP] Circle detected for "
-                    f"{circle_count} frame(s). Stop vehicle."
+                    f"{circle_count} frame(s). "
+                    f"source={circle_source} "
+                    f"width={circle_width:.1f}px "
+                    f"conf={circle_conf:.2f}. Stop vehicle."
                 )
                 stop_vehicle()
                 break
 
             # =====================================
-            # 2. Segmentation + PID steering
+            # 2. Dual segmentation + PID steering
             # =====================================
-            steering, valid_mask, debug = get_steering_from_segmentation(
-                frame,
+            steering, valid_mask, debug = get_steering_from_dual_segmentation(
+                left_frame,
+                right_frame,
                 prev_steering
             )
 
@@ -433,6 +591,7 @@ def main():
 
                 print(
                     f"[PID] "
+                    f"source={debug['source']} "
                     f"error={debug['error_norm']:+.3f} "
                     f"raw={debug['raw_steering']:+.3f} "
                     f"steer={steering:+.3f}"

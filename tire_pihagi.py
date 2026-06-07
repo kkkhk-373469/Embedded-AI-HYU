@@ -1038,6 +1038,9 @@ def main():
         for label in SIGN_LABEL_TO_RIGHT_BOX_COUNT
     }
     drive_mode = "ROAD_FOLLOW"
+    avoid_mode=False
+    avoid_start=0
+    avoid_dir=0
     force_right_start_time = None
     post_force_stop_start_time = None
     lane_diverge_count = 0
